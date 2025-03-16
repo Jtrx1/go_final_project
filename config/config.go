@@ -11,7 +11,7 @@ type EnvVaiable struct {
 func СheckEnv() *EnvVaiable {
 
 	var e EnvVaiable
-	e.DBFile = "../scheduler.db"
+	e.DBFile = "./scheduler.db"
 	e.Password = "12345678"
 	e.Port = "7540"
 
