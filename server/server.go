@@ -6,11 +6,11 @@ import (
 )
 
 // SetupRouter создает и настраивает роутер Gin
-func SetupRouter(staticPath string) *gin.Engine {
+func SetupRouter() *gin.Engine {
 	r := gin.Default()
 	
 	// Отдаем статические файлы из указанной папки
-	r.StaticFS("/", http.Dir(staticPath))
+	r.StaticFS("/", http.Dir("./web"))
 	
 	return r
 }

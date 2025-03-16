@@ -1,13 +1,22 @@
 package main
 
 import (
-  "net/http"
-	"github.com/gin-gonic/gin"
-	
+	"log"
+
+	"github.com/Jtrx1/go_final_project/config"
+	"github.com/Jtrx1/go_final_project/scheduler"
+	"github.com/Jtrx1/go_final_project/server"
 )
 
 func main() {
-	r := gin.Default()
-    r.StaticFS("/", http.Dir("./web"))
-  r.Run(":7154")
+	config := config.СheckEnv()
+	db, err:=scheduler.InitDB(config.DBFile)
+	
+	if err!=nil{
+		log.Println("Ошибка при открытии БД")
+	}
+	db.Close()
+
+	r := server.SetupRouter()
+	r.Run(":" + config.Port)
 }
