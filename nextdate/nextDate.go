@@ -50,7 +50,7 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 	case "y":
 		return yearRepeat(now, parseDate), nil
 	case "w":
-
+		return weekRepeat(now, parseDate, parts[1])
 	case "m":
 	default:
 		return "", fmt.Errorf("Некорректное правило повторения")
@@ -74,12 +74,43 @@ func dayRepeat(now time.Time, parseDate time.Time, dayStr string) (string, error
 		}
 	}
 }
-func yearRepeat(now time.Time, parseDate time.Time) string {
+func yearRepeat(now time.Time, parseDate time.Time) (string, error) {
+	parseDate = parseDate.AddDate(1, 0, 0)
+	if parseDate.After(now) {
+		return parseDate.Format(TimeFormat), nil
+	}
+	return "", fmt.Errorf("Ошибка при попытке добавить год")
+}
 
-	for {
-		parseDate = parseDate.AddDate(1, 0, 0)
-		if parseDate.After(now) {
-			return parseDate.Format(TimeFormat)
+func weekRepeat(now time.Time, parseDate time.Time, dayStr string) (string, error) {
+	weekdays := make(map[time.Weekday]struct{})
+	if dayStr == "" {
+		return "", fmt.Errorf("Пустая строка дней недели")
+	}
+
+	for _, wd := range strings.Split(dayStr, ",") {
+		wdNum, err := strconv.Atoi(wd)
+		if err != nil || wdNum < 1 || wdNum > 7 {
+			return "", fmt.Errorf("Неверный номер дня: %s (требуется 1-7)", wd)
+		}
+		weekdays[time.Weekday(wdNum%7)] = struct{}{}
+	}
+
+	currentDate := parseDate.AddDate(0, 0, 1)
+	currentWeekday := currentDate.Weekday()
+
+	minDays := 7
+	for target := range weekdays {
+		daysUntil := (int(target) - int(currentWeekday) + 7) % 7
+		if daysUntil < minDays {
+			minDays = daysUntil
 		}
 	}
+
+	nextDate := currentDate.AddDate(0, 0, minDays)
+	return nextDate.Format(TimeFormat), nil
+
+}
+func monthRepeat() {
+
 }
