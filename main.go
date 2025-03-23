@@ -10,13 +10,11 @@ import (
 
 func main() {
 	config := config.СheckEnv()
-	db, err:=scheduler.InitDB(config.DBFile)
-	
-	if err!=nil{
-		log.Println("Ошибка при открытии БД")
+	db, err := scheduler.InitDB(config.DBFile)
+	if err != nil {
+		log.Println("Ошибка при открытии/инициализации БД")
 	}
-	db.Close()
-
-	r := server.SetupRouter()
+	defer db.Close()
+	r := server.SetupRouter(db)
 	r.Run(":" + config.Port)
 }
