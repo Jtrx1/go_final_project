@@ -41,49 +41,60 @@ func NextDateHandler(c *gin.Context) {
 func AddTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req TaskRequest
+		now := time.Now().UTC()
 
-		// Парсинг JSON
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат запроса"})
 			return
 		}
 
-		// Валидация обязательных полей
+		// Валидация заголовка
 		if req.Title == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Необходимо указать заголовок"})
 			return
 		}
 
 		// Обработка даты
-		var date string
+		var dateStr string
 		if req.Date != "" {
-			_, err := time.Parse(nextdate.TimeFormat, req.Date)
+			// Парсинг входящей даты
+			parsedDate, err := time.Parse(nextdate.TimeFormat, req.Date)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат даты"})
 				return
 			}
-			date = req.Date
+			dateStr = parsedDate.Format(nextdate.TimeFormat)
 		} else {
-			date = time.Now().Format(nextdate.TimeFormat)
+			// Дата по умолчанию - сегодня
+			dateStr = now.Format(nextdate.TimeFormat)
 		}
 
-		// Валидация правила повтора
+		// Корректировка даты для повторяющихся задач
 		if req.Repeat != "" {
-			_, err := nextdate.NextDate(time.Now(), date, req.Repeat)
+			// Рассчитываем следующую валидную дату
+			nextDate, err := nextdate.NextDate(now, dateStr, req.Repeat)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректное правило повторения: " + err.Error()})
 				return
 			}
+			dateStr = nextDate
+		} else {
+			// Проверка даты для не повторяющихся задач
+			if dateStr < now.Format(nextdate.TimeFormat) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Дата не может быть меньше текущей"})
+				return
+			}
 		}
 
-		// Вставка в БД
+		// Вставка в БД с корректной датой
 		result, err := db.Exec(
 			"INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
-			date,
+			dateStr,
 			req.Title,
 			req.Comment,
 			req.Repeat,
 		)
+
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения задачи"})
 			return
