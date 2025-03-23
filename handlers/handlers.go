@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"log"
 	"net/http"
 	"time"
 
@@ -42,6 +41,7 @@ func NextDateHandler(c *gin.Context) {
 func AddTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req TaskRequest
+		now := time.Now().UTC()
 
 		// Парсинг JSON
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -56,44 +56,47 @@ func AddTask(db *sql.DB) gin.HandlerFunc {
 		}
 
 		// Обработка даты
-		var date string
+		var dateStr string
 		if req.Date != "" {
-			parseDate, err := time.Parse(nextdate.TimeFormat, req.Date)
+			// Парсим входящую дату
+			parsedDate, err := time.Parse(nextdate.TimeFormat, req.Date)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат даты"})
 				return
 			}
-			if parseDate.After(time.Now()) {
-				log.Println(parseDate.After(time.Now()))
-				date = time.Now().Format(nextdate.TimeFormat)
+			if parsedDate.After(time.Now()) {
+				dateStr = now.Format(nextdate.TimeFormat)
+			} else {
+				dateStr = req.Date
 			}
-			date = req.Date
 		} else {
-			date = time.Now().Format(nextdate.TimeFormat)
+			// Если дата не указана - используем сегодняшнюю
+			dateStr = now.Format(nextdate.TimeFormat)
 		}
 
+		// Корректировка даты для повторяющихся задач
 		if req.Repeat != "" {
-			_, err := nextdate.NextDate(time.Now(), date, req.Repeat)
+			nextDate, err := nextdate.NextDate(now, dateStr, req.Repeat)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректное правило повторения: " + err.Error()})
 				return
 			}
+			dateStr = nextDate
 		}
 
-		// Вставка в БД
 		result, err := db.Exec(
 			"INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
-			date,
+			dateStr,
 			req.Title,
 			req.Comment,
 			req.Repeat,
 		)
+
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения задачи"})
 			return
 		}
 
-		// Получение ID созданной записи
 		id, err := result.LastInsertId()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения ID задачи"})
