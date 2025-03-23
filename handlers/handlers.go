@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"time"
 
@@ -41,60 +42,52 @@ func NextDateHandler(c *gin.Context) {
 func AddTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req TaskRequest
-		now := time.Now().UTC()
 
+		// Парсинг JSON
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат запроса"})
 			return
 		}
 
-		// Валидация заголовка
+		// Валидация обязательных полей
 		if req.Title == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Необходимо указать заголовок"})
 			return
 		}
 
 		// Обработка даты
-		var dateStr string
+		var date string
 		if req.Date != "" {
-			// Парсинг входящей даты
-			parsedDate, err := time.Parse(nextdate.TimeFormat, req.Date)
+			parseDate, err := time.Parse(nextdate.TimeFormat, req.Date)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат даты"})
 				return
 			}
-			dateStr = parsedDate.Format(nextdate.TimeFormat)
+			if parseDate.After(time.Now()) {
+				log.Println(parseDate.After(time.Now()))
+				date = time.Now().Format(nextdate.TimeFormat)
+			}
+			date = req.Date
 		} else {
-			// Дата по умолчанию - сегодня
-			dateStr = now.Format(nextdate.TimeFormat)
+			date = time.Now().Format(nextdate.TimeFormat)
 		}
 
-		// Корректировка даты для повторяющихся задач
 		if req.Repeat != "" {
-			// Рассчитываем следующую валидную дату
-			nextDate, err := nextdate.NextDate(now, dateStr, req.Repeat)
+			_, err := nextdate.NextDate(time.Now(), date, req.Repeat)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректное правило повторения: " + err.Error()})
 				return
 			}
-			dateStr = nextDate
-		} else {
-			// Проверка даты для не повторяющихся задач
-			if dateStr < now.Format(nextdate.TimeFormat) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Дата не может быть меньше текущей"})
-				return
-			}
 		}
 
-		// Вставка в БД с корректной датой
+		// Вставка в БД
 		result, err := db.Exec(
 			"INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
-			dateStr,
+			date,
 			req.Title,
 			req.Comment,
 			req.Repeat,
 		)
-
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения задачи"})
 			return
