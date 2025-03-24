@@ -3,15 +3,26 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Jtrx1/go_final_project/nextdate"
 	"github.com/gin-gonic/gin"
 )
 
+// Структура для добавления задачи
 type TaskRequest struct {
 	Date    string `json:"date"`
 	Title   string `json:"title" binding:"required"`
+	Comment string `json:"comment"`
+	Repeat  string `json:"repeat"`
+}
+
+// Структура для поиска задачи
+type TaskResponse struct {
+	ID      string `json:"id"`
+	Date    string `json:"date"`
+	Title   string `json:"title"`
 	Comment string `json:"comment"`
 	Repeat  string `json:"repeat"`
 }
@@ -45,45 +56,42 @@ func AddTask(db *sql.DB) gin.HandlerFunc {
 
 		// Парсинг JSON
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат запроса"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат запроса."})
 			return
 		}
 
 		// Валидация обязательных полей
 		if req.Title == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Необходимо указать заголовок"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Необходимо указать заголовок задачи"})
 			return
 		}
 
 		// Обработка даты
 		var dateStr string
 		if req.Date != "" {
-			// Парсим входящую дату
-			parsedDate, err := time.Parse(nextdate.TimeFormat, req.Date)
+			// Парсим входящую дату в UTC
+			parsedDate, err := time.ParseInLocation(nextdate.TimeFormat, req.Date, time.UTC)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат даты"})
 				return
 			}
-			if parsedDate.After(time.Now()) {
+			if parsedDate.Before(now) {
 				dateStr = now.Format(nextdate.TimeFormat)
 			} else {
 				dateStr = req.Date
 			}
 		} else {
-			// Если дата не указана - используем сегодняшнюю
 			dateStr = now.Format(nextdate.TimeFormat)
 		}
-
-		// Корректировка даты для повторяющихся задач
+		// Вывод ошибки в случае некорректного правила повторения
 		if req.Repeat != "" {
-			nextDate, err := nextdate.NextDate(now, dateStr, req.Repeat)
+			_, err := nextdate.NextDate(now, dateStr, req.Repeat)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректное правило повторения: " + err.Error()})
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
-			dateStr = nextDate
-		}
 
+		}
 		result, err := db.Exec(
 			"INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
 			dateStr,
@@ -91,18 +99,58 @@ func AddTask(db *sql.DB) gin.HandlerFunc {
 			req.Comment,
 			req.Repeat,
 		)
-
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения задачи"})
 			return
 		}
-
 		id, err := result.LastInsertId()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения ID задачи"})
 			return
 		}
-
 		c.JSON(http.StatusOK, gin.H{"id": id})
+	}
+}
+func GetTasks(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rows, err := db.Query(`
+		SELECT id, date, title, comment, repeat 
+		FROM scheduler 
+		ORDER BY date ASC
+	`)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения задач"})
+			return
+		}
+		defer rows.Close()
+
+		var tasks []TaskResponse
+
+		for rows.Next() {
+			var task TaskResponse
+			var id int64
+
+			err := rows.Scan(
+				&id,
+				&task.Date,
+				&task.Title,
+				&task.Comment,
+				&task.Repeat,
+			)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обработки данных"})
+				return
+			}
+
+			task.ID = strconv.FormatInt(id, 10)
+			tasks = append(tasks, task)
+		}
+
+		if err = rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка чтения результатов"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 	}
 }

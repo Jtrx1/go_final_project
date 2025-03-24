@@ -14,11 +14,11 @@ func SetupRouter(db *sql.DB) *gin.Engine {
 	r := gin.Default()
 	// 1. Сначала регистрируем API-маршруты. Особенности Gin
 	r.GET("/api/nextdate", handlers.NextDateHandler)
+	r.GET("/api/tasks", handlers.GetTasks(db))
 	r.POST("/api/task", handlers.AddTask(db))
 	// 2. Настраиваем статику через NoRoute. Особенности Gin
 	r.NoRoute(func(c *gin.Context) {
 		filePath := filepath.Join("./web", c.Request.URL.Path)
-		// Проверяем существование файла, если файл существует - отдаём его
 		if _, err := os.Stat(filePath); err == nil {
 			c.File(filePath)
 			return
