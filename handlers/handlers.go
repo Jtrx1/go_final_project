@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Jtrx1/go_final_project/nextdate"
@@ -113,31 +114,54 @@ func AddTask(db *sql.DB) gin.HandlerFunc {
 }
 func GetTasks(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := db.Query(`
-		SELECT id, date, title, comment, repeat 
-		FROM scheduler 
-		ORDER BY date ASC
-	`)
+		search := strings.TrimSpace(c.Query("search"))
+		tasks := make([]TaskResponse, 0)
+
+		// Базовый запрос с сортировкой
+		query := `
+            SELECT id, date, title, comment, repeat 
+            FROM scheduler 
+            WHERE 1=1
+        `
+		args := []interface{}{}
+
+		// Обработка поискового запроса
+		if search != "" {
+			// Попытка парсинга даты
+			if t, err := time.Parse("02.01.2006", search); err == nil {
+				query += " AND date = ?"
+				args = append(args, t.Format("20060102"))
+			} else {
+				// Текстовый поиск с экранированием спецсимволов
+				query += " AND (title LIKE ? ESCAPE '\\' OR comment LIKE ? ESCAPE '\\')"
+				searchTerm := "%" + escapeLike(search) + "%"
+				args = append(args, searchTerm, searchTerm)
+			}
+		}
+
+		// Добавляем сортировку и лимит
+		query += " ORDER BY date ASC, id ASC LIMIT 50"
+
+		// Выполняем запрос с параметрами
+		rows, err := db.Query(query, args...)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения задач"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка поиска задач"})
 			return
 		}
 		defer rows.Close()
 
-		var tasks []TaskResponse
-
+		// Обработка результатов
 		for rows.Next() {
 			var task TaskResponse
 			var id int64
 
-			err := rows.Scan(
+			if err := rows.Scan(
 				&id,
 				&task.Date,
 				&task.Title,
 				&task.Comment,
 				&task.Repeat,
-			)
-			if err != nil {
+			); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обработки данных"})
 				return
 			}
@@ -152,5 +176,64 @@ func GetTasks(db *sql.DB) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"tasks": tasks})
+	}
+
+}
+func escapeLike(s string) string {
+	return strings.ReplaceAll(
+		strings.ReplaceAll(
+			strings.ReplaceAll(s, "\\", "\\\\"),
+			"%", "\\%",
+		),
+		"_", "\\_",
+	)
+}
+func GetTask(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		idStr := c.Query("id")
+		if idStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан идентификатор"})
+			return
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор"})
+			return
+		}
+
+		var task TaskResponse
+
+		err = db.QueryRow(`
+            SELECT id, date, title, comment, repeat 
+            FROM scheduler 
+            WHERE id = ?
+        `, id).Scan(
+			&task.ID,
+			&task.Date,
+			&task.Title,
+			&task.Comment,
+			&task.Repeat,
+		)
+
+		switch {
+		case err == sql.ErrNoRows:
+			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+		case err != nil:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
+		default:
+			c.JSON(http.StatusOK, gin.H{
+				"id":      task.ID,
+				"date":    task.Date,
+				"title":   task.Title,
+				"comment": task.Comment,
+				"repeat":  task.Repeat,
+			})
+		}
+	}
+}
+func EditTask(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+
 	}
 }
