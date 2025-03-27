@@ -205,7 +205,7 @@ func GetTask(db *sql.DB) gin.HandlerFunc {
 		var task TaskResponse
 
 		err = db.QueryRow(`
-            SELECT id, date, title, comment, repeat 
+            SELECT * 
             FROM scheduler 
             WHERE id = ?
         `, id).Scan(
@@ -234,6 +234,78 @@ func GetTask(db *sql.DB) gin.HandlerFunc {
 }
 func EditTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var req TaskResponse
 
+		// Парсинг и валидация входных данных
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат запроса"})
+			return
+		}
+
+		if req.Title == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Для задачи обязателен щаголовок"})
+			return
+		}
+		// Преобразование ID в число
+		id, err := strconv.ParseInt(req.ID, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор"})
+			return
+		}
+
+		// Проверка существования задачи
+		var exists bool
+		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM scheduler WHERE id = ?)", id).Scan(&exists)
+		if err != nil || !exists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+			return
+		}
+
+		// Обработка даты
+		now := time.Now().UTC()
+		dateStr := req.Date
+		if req.Date != "" {
+			parsedDate, err := time.Parse(nextdate.TimeFormat, req.Date)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат даты"})
+				return
+			}
+
+			// Если дата в прошлом - использовать текущую
+			if parsedDate.Before(now) {
+				dateStr = now.Format(nextdate.TimeFormat)
+			}
+		} else {
+			dateStr = now.Format(nextdate.TimeFormat)
+		}
+
+		// Обработка повторений
+		if req.Repeat != "" {
+			nextDate, err := nextdate.NextDate(now, dateStr, req.Repeat)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректное правило повторения"})
+				return
+			}
+			dateStr = nextDate
+		}
+
+		// Обновление в БД
+		_, err = db.Exec(`
+				UPDATE scheduler 
+				SET date = ?, title = ?, comment = ?, repeat = ?
+				WHERE id = ?`,
+			dateStr,
+			req.Title,
+			req.Comment,
+			req.Repeat,
+			id,
+		)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{})
 	}
 }
