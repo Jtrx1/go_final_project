@@ -162,7 +162,7 @@ func GetTask(db *sql.DB) gin.HandlerFunc {
 }
 func EditTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req scheduler.TaskResponse
+		var req TaskResponse
 
 		// Парсинг и валидация входных данных
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -200,7 +200,14 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 			dateStr = nextDate
 		}
 		req.Date = dateStr
-		code, err := scheduler.UpdateTaskDB(db, req)
+		var task scheduler.TaskResponse
+		task.Comment = req.Comment
+		task.Date = req.Date
+		task.ID, _ = strconv.ParseInt(req.ID, 10, 64)
+		task.Repeat = req.Repeat
+		task.Title = req.Title
+
+		code, err := scheduler.UpdateTaskDB(db, task)
 
 		if err != nil {
 			c.JSON(code, gin.H{"error": err.Error()})

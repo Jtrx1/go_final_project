@@ -23,26 +23,24 @@ func SignInHandler(pass string) gin.HandlerFunc {
 			return
 		}
 
-		envPassword := os.Getenv("TODO_PASSWORD")
-
 		// Если пароль в окружении не установлен, пропускаем аутентификацию
 		if pass == "" {
 			c.JSON(http.StatusOK, gin.H{"token": "notoken"})
 			return
 		}
 
-		if req.Password != envPassword {
+		if req.Password != pass {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный пароль"})
 			return
 		}
 
 		// Генерация JWT
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"hash": fmt.Sprintf("%x", sha256.Sum256([]byte(envPassword))), // Хэш пароля
+			"hash": fmt.Sprintf("%x", sha256.Sum256([]byte(pass))), // Хэш пароля
 			"exp":  time.Now().Add(8 * time.Hour).Unix(),
 		})
 
-		tokenString, err := token.SignedString([]byte(envPassword))
+		tokenString, err := token.SignedString([]byte(pass))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка генерации токена"})
 			return

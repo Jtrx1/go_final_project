@@ -17,7 +17,7 @@ func SetupRouter(db *sql.DB) *gin.Engine {
 	// 1. Сначала регистрируем API-маршруты. Особенности Gin
 	r.POST("/api/signin", auth.SignInHandler(config.СheckEnv().Password))
 	// Protected routes
-	authGroup := r.Group("/")
+	authGroup := r.Group("/api")
 	authGroup.Use(auth.AuthMiddleware())
 	{
 		r.GET("/api/nextdate", handlers.NextDateHandler)
