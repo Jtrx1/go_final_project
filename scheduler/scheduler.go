@@ -12,7 +12,7 @@ import (
 )
 
 type TaskResponse struct {
-	ID      string `json:"id"`
+	ID      int64  `json:"id"`
 	Date    string `json:"date"`
 	Title   string `json:"title"`
 	Comment string `json:"comment"`
@@ -135,5 +135,24 @@ func DeleteTaskDB(db *sql.DB, id int64) (int, error) {
 	if rowsAffected == 0 {
 		return http.StatusNotFound, fmt.Errorf("Не удалено ни одной задачи")
 	}
+	return http.StatusOK, nil
+}
+
+func UpdateTaskDB(db *sql.DB, task TaskResponse) (int, error) {
+	_, err := db.Exec(`
+				UPDATE scheduler 
+				SET date = ?, title = ?, comment = ?, repeat = ?
+				WHERE id = ?`,
+		task.Date,
+		task.Title,
+		task.Comment,
+		task.Repeat,
+		task.ID,
+	)
+
+	if err != nil {
+		return http.StatusInternalServerError, fmt.Errorf("Ошибка обновления задачи: %w", err)
+	}
+
 	return http.StatusOK, nil
 }

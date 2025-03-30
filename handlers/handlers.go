@@ -142,14 +142,16 @@ func GetTask(db *sql.DB) gin.HandlerFunc {
 		idStr := c.Query("id")
 		id, code, err := getTaskId(idStr)
 		if err != nil {
-			c.JSON(code, gin.H{"error": err})
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
 		}
 		task, statusCode, err := scheduler.GetTaskDb(db, id)
 		if err != nil {
-			c.JSON(statusCode, gin.H{"error": err})
+			c.JSON(statusCode, gin.H{"error": err.Error()})
+			return
 		} else {
 			c.JSON(statusCode, gin.H{
-				"id":      task.ID,
+				"id":      strconv.FormatInt(task.ID, 10),
 				"date":    task.Date,
 				"title":   task.Title,
 				"comment": task.Comment,
@@ -160,7 +162,7 @@ func GetTask(db *sql.DB) gin.HandlerFunc {
 }
 func EditTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req TaskResponse
+		var req scheduler.TaskResponse
 
 		// Парсинг и валидация входных данных
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -169,22 +171,9 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 		}
 
 		if req.Title == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Для задачи обязателен щаголовок"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Для задачи обязателен заголовок"})
 			return
 		}
-
-		id, code, err := getTaskId(req.ID)
-		if err != nil {
-			c.JSON(code, gin.H{"error": err})
-		}
-		// Проверка существования задачи
-		var exists bool
-		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM scheduler WHERE id = ?)", id).Scan(&exists)
-		if err != nil || !exists {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
-			return
-		}
-
 		// Обработка даты
 		now := time.Now().UTC()
 		dateStr := req.Date
@@ -194,7 +183,6 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат даты"})
 				return
 			}
-
 			// Если дата в прошлом - использовать текущую
 			if parsedDate.Before(now) {
 				dateStr = now.Format(nextdate.TimeFormat)
@@ -202,32 +190,20 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 		} else {
 			dateStr = now.Format(nextdate.TimeFormat)
 		}
-
 		// Обработка повторений
 		if req.Repeat != "" {
 			nextDate, err := nextdate.NextDate(now, dateStr, req.Repeat)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректное правило повторения"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
 			dateStr = nextDate
 		}
-
-		// Обновление в БД
-		_, err = db.Exec(`
-				UPDATE scheduler 
-				SET date = ?, title = ?, comment = ?, repeat = ?
-				WHERE id = ?`,
-			dateStr,
-			req.Title,
-			req.Comment,
-			req.Repeat,
-			id,
-		)
+		req.Date = dateStr
+		code, err := scheduler.UpdateTaskDB(db, req)
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
-			return
+			c.JSON(code, gin.H{"error": err.Error()})
 		}
 
 		c.JSON(http.StatusOK, gin.H{})
@@ -236,80 +212,44 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 
 func TaskDone(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Получаем и проверяем ID задачи
 		idStr := c.Query("id")
 		id, code, err := getTaskId(idStr)
 		if err != nil {
-			c.JSON(code, gin.H{"error": err})
-		}
-
-		// Начинаем транзакцию
-		tx, err := db.Begin()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка начала транзакции"})
+			c.JSON(code, gin.H{"error": err.Error()})
 			return
 		}
-		defer tx.Rollback()
-
-		// Получаем текущие данные задачи
-		var currentDate, repeatRule string
-		err = tx.QueryRow(`
-            SELECT *
-            FROM scheduler 
-            WHERE id = ?
-        `, id).Scan(&currentDate, &repeatRule)
-
+		task, code, err := scheduler.GetTaskDb(db, id)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
-			}
+			c.JSON(code, gin.H{"error": err.Error()})
 			return
 		}
-
-		now := time.Now().UTC()
-
-		// Обработка повторяющейся задачи
-		if repeatRule != "" {
-			nextDate, err := nextdate.NextDate(now, currentDate, repeatRule)
+		if task.Repeat == "" {
+			code, err = scheduler.DeleteTaskDB(db, id)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Ошибка вычисления даты: " + err.Error()})
+				c.JSON(code, gin.H{"error": err.Error()})
 				return
 			}
-
-			_, err = tx.Exec(`
-                UPDATE scheduler 
-                SET date = ?
-                WHERE id = ?`,
-				nextDate,
-				id,
-			)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
-				return
-			}
+			c.JSON(http.StatusOK, gin.H{})
+			return
 		} else {
-			// Удаление одноразовой задачи
-			_, err = tx.Exec(`
-                DELETE FROM scheduler 
-                WHERE id = ?`,
-				id,
-			)
+			nextDate, err := nextdate.NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка удаления задачи"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
+			task.Date = nextDate
 		}
 
-		// Фиксация транзакции
-		if err := tx.Commit(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения изменений"})
+		code, err = scheduler.UpdateTaskDB(db, *task)
+
+		if err != nil {
+			c.JSON(code, gin.H{"error": err.Error()})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{})
+		c.JSON(code, gin.H{})
 	}
+
 }
 
 func DeleteTask(db *sql.DB) gin.HandlerFunc {
@@ -317,11 +257,11 @@ func DeleteTask(db *sql.DB) gin.HandlerFunc {
 		idStr := c.Query("id")
 		id, code, err := getTaskId(idStr)
 		if err != nil {
-			c.JSON(code, gin.H{"error": err})
+			c.JSON(code, gin.H{"error": err.Error()})
 		}
 		code, err = scheduler.DeleteTaskDB(db, id)
 		if err != nil {
-			c.JSON(code, gin.H{"error": err})
+			c.JSON(code, gin.H{"error": err.Error()})
 		}
 		c.JSON(http.StatusOK, gin.H{})
 	}

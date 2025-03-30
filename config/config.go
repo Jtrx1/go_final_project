@@ -23,7 +23,7 @@ func СheckEnv() *EnvVaiable {
 	if ok {
 		e.DBFile = dbFile
 	}
-	password, ok := os.LookupEnv("TODO_PORT")
+	password, ok := os.LookupEnv("TODO_PASSWORD")
 	if ok {
 		e.Password = password
 	}
