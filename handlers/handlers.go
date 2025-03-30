@@ -309,3 +309,117 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{})
 	}
 }
+
+func TaskDone(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Получаем и проверяем ID задачи
+		idStr := c.Query("id")
+		if idStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан идентификатор задачи"})
+			return
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор задачи"})
+			return
+		}
+
+		// Начинаем транзакцию
+		tx, err := db.Begin()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка начала транзакции"})
+			return
+		}
+		defer tx.Rollback()
+
+		// Получаем текущие данные задачи
+		var currentDate, repeatRule string
+		err = tx.QueryRow(`
+            SELECT date, repeat 
+            FROM scheduler 
+            WHERE id = ? FOR UPDATE
+        `, id).Scan(&currentDate, &repeatRule)
+
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
+			}
+			return
+		}
+
+		now := time.Now().UTC()
+
+		// Обработка повторяющейся задачи
+		if repeatRule != "" {
+			nextDate, err := nextdate.NextDate(now, currentDate, repeatRule)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Ошибка вычисления даты: " + err.Error()})
+				return
+			}
+
+			_, err = tx.Exec(`
+                UPDATE scheduler 
+                SET date = ?
+                WHERE id = ?`,
+				nextDate,
+				id,
+			)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
+				return
+			}
+		} else {
+			// Удаление одноразовой задачи
+			_, err = tx.Exec(`
+                DELETE FROM scheduler 
+                WHERE id = ?`,
+				id,
+			)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка удаления задачи"})
+				return
+			}
+		}
+
+		// Фиксация транзакции
+		if err := tx.Commit(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения изменений"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{})
+	}
+}
+
+func DeleteTask(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		idStr := c.Query("id")
+		if idStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан идентификатор задачи"})
+			return
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор задачи"})
+			return
+		}
+
+		result, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
+			return
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{})
+	}
+}

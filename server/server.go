@@ -16,7 +16,9 @@ func SetupRouter(db *sql.DB) *gin.Engine {
 	r.GET("/api/nextdate", handlers.NextDateHandler)
 	r.GET("/api/tasks", handlers.GetTasks(db))
 	r.POST("/api/task", handlers.AddTask(db))
+	r.POST("/api/task/done", handlers.TaskDone(db))
 	r.PUT("/api/task", handlers.EditTask(db))
+	r.DELETE("/api/task", handlers.DeleteTask(db))
 	r.GET("/api/task", handlers.GetTask(db))
 	// 2. Настраиваем статику через NoRoute. Особенности Gin
 	r.NoRoute(func(c *gin.Context) {
