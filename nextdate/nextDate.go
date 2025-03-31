@@ -30,11 +30,14 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 
 	switch parts[0] {
 	case "d":
+		if len(parts) < 2 { // Если нет второй части
+			return "", fmt.Errorf("некорректный формат правила повторения")
+		}
 		return dayRepeat(now, parseDate, parts[1])
 	case "y":
 		return yearRepeat(now, parseDate)
 	default:
-		return "", fmt.Errorf("Некорректное правило повторения")
+		return "", fmt.Errorf("некорректное правило повторения")
 	}
 
 }
@@ -42,10 +45,10 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 func dayRepeat(now time.Time, parseDate time.Time, dayStr string) (string, error) {
 	days, err := strconv.Atoi(dayStr)
 	if err != nil || days <= 0 {
-		return "", fmt.Errorf("Ошибка формата дней")
+		return "", fmt.Errorf("ошибка формата дней")
 	}
 	if days >= 400 {
-		return "", fmt.Errorf("Слишком большое количество дней")
+		return "", fmt.Errorf("слишком большое количество дней")
 	}
 
 	for {

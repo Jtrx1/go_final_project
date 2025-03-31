@@ -338,14 +338,14 @@ func TaskDone(db *sql.DB) gin.HandlerFunc {
 		err = tx.QueryRow(`
             SELECT date, repeat 
             FROM scheduler 
-            WHERE id = ? FOR UPDATE
-        `, id).Scan(&currentDate, &repeatRule)
+            WHERE id = ?`,
+			id).Scan(&currentDate, &repeatRule)
 
 		if err != nil {
 			if err == sql.ErrNoRows {
 				c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
 			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			}
 			return
 		}
