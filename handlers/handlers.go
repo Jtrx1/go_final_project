@@ -2,14 +2,12 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Jtrx1/go_final_project/nextdate"
-	"github.com/Jtrx1/go_final_project/scheduler"
 	"github.com/gin-gonic/gin"
 )
 
@@ -117,41 +115,115 @@ func AddTask(db *sql.DB) gin.HandlerFunc {
 func GetTasks(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		search := strings.TrimSpace(c.Query("search"))
+		tasks := make([]TaskResponse, 0)
 
-		var isDate bool
+		// Базовый запрос с сортировкой
+		query := `
+            SELECT id, date, title, comment, repeat 
+            FROM scheduler 
+            WHERE 1=1
+        `
+		args := []interface{}{}
+
+		// Обработка поискового запроса
 		if search != "" {
+			// Попытка парсинга даты
 			if t, err := time.Parse("02.01.2006", search); err == nil {
-				search = t.Format("20060102")
-				isDate = true
+				query += " AND date = ?"
+				args = append(args, t.Format("20060102"))
+			} else {
+				// Текстовый поиск с экранированием спецсимволов
+				query += " AND (title LIKE ? ESCAPE '\\' OR comment LIKE ? ESCAPE '\\')"
+				searchTerm := "%" + escapeLike(search) + "%"
+				args = append(args, searchTerm, searchTerm)
 			}
 		}
-		tasks := make([]*scheduler.TaskResponse, 0)
-		var code int
-		var err error
-		tasks, code, err = scheduler.GetTasksDB(db, search, isDate, 100)
+
+		// Добавляем сортировку и лимит
+		query += " ORDER BY date ASC, id ASC LIMIT 50"
+
+		// Выполняем запрос с параметрами
+		rows, err := db.Query(query, args...)
 		if err != nil {
-			c.JSON(code, gin.H{"error": err})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка поиска задач"})
+			return
 		}
+		defer rows.Close()
+
+		// Обработка результатов
+		for rows.Next() {
+			var task TaskResponse
+			var id int64
+
+			if err := rows.Scan(
+				&id,
+				&task.Date,
+				&task.Title,
+				&task.Comment,
+				&task.Repeat,
+			); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обработки данных"})
+				return
+			}
+
+			task.ID = strconv.FormatInt(id, 10)
+			tasks = append(tasks, task)
+		}
+
+		if err = rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка чтения результатов"})
+			return
+		}
+
 		c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 	}
 
 }
-
+func escapeLike(s string) string {
+	return strings.ReplaceAll(
+		strings.ReplaceAll(
+			strings.ReplaceAll(s, "\\", "\\\\"),
+			"%", "\\%",
+		),
+		"_", "\\_",
+	)
+}
 func GetTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Query("id")
-		id, code, err := getTaskId(idStr)
-		if err != nil {
-			c.JSON(code, gin.H{"error": err.Error()})
+		if idStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан идентификатор"})
 			return
 		}
-		task, statusCode, err := scheduler.GetTaskDb(db, id)
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
-			c.JSON(statusCode, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор"})
 			return
-		} else {
-			c.JSON(statusCode, gin.H{
-				"id":      strconv.FormatInt(task.ID, 10),
+		}
+
+		var task TaskResponse
+
+		err = db.QueryRow(`
+            SELECT * 
+            FROM scheduler 
+            WHERE id = ?
+        `, id).Scan(
+			&task.ID,
+			&task.Date,
+			&task.Title,
+			&task.Comment,
+			&task.Repeat,
+		)
+
+		switch {
+		case err == sql.ErrNoRows:
+			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+		case err != nil:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
+		default:
+			c.JSON(http.StatusOK, gin.H{
+				"id":      task.ID,
 				"date":    task.Date,
 				"title":   task.Title,
 				"comment": task.Comment,
@@ -171,9 +243,24 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 		}
 
 		if req.Title == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Для задачи обязателен заголовок"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Для задачи обязателен щаголовок"})
 			return
 		}
+		// Преобразование ID в число
+		id, err := strconv.ParseInt(req.ID, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор"})
+			return
+		}
+
+		// Проверка существования задачи
+		var exists bool
+		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM scheduler WHERE id = ?)", id).Scan(&exists)
+		if err != nil || !exists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+			return
+		}
+
 		// Обработка даты
 		now := time.Now().UTC()
 		dateStr := req.Date
@@ -183,6 +270,7 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный формат даты"})
 				return
 			}
+
 			// Если дата в прошлом - использовать текущую
 			if parsedDate.Before(now) {
 				dateStr = now.Format(nextdate.TimeFormat)
@@ -190,27 +278,32 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 		} else {
 			dateStr = now.Format(nextdate.TimeFormat)
 		}
+
 		// Обработка повторений
 		if req.Repeat != "" {
 			nextDate, err := nextdate.NextDate(now, dateStr, req.Repeat)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректное правило повторения"})
 				return
 			}
 			dateStr = nextDate
 		}
-		req.Date = dateStr
-		var task scheduler.TaskResponse
-		task.Comment = req.Comment
-		task.Date = req.Date
-		task.ID, _ = strconv.ParseInt(req.ID, 10, 64)
-		task.Repeat = req.Repeat
-		task.Title = req.Title
 
-		code, err := scheduler.UpdateTaskDB(db, task)
+		// Обновление в БД
+		_, err = db.Exec(`
+				UPDATE scheduler 
+				SET date = ?, title = ?, comment = ?, repeat = ?
+				WHERE id = ?`,
+			dateStr,
+			req.Title,
+			req.Comment,
+			req.Repeat,
+			id,
+		)
 
 		if err != nil {
-			c.JSON(code, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
+			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{})
@@ -219,71 +312,114 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 
 func TaskDone(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Получаем и проверяем ID задачи
 		idStr := c.Query("id")
-		id, code, err := getTaskId(idStr)
-		if err != nil {
-			c.JSON(code, gin.H{"error": err.Error()})
+		if idStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан идентификатор задачи"})
 			return
 		}
-		task, code, err := scheduler.GetTaskDb(db, id)
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
-			c.JSON(code, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор задачи"})
 			return
 		}
-		if task.Repeat == "" {
-			code, err = scheduler.DeleteTaskDB(db, id)
+
+		// Начинаем транзакцию
+		tx, err := db.Begin()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка начала транзакции"})
+			return
+		}
+		defer tx.Rollback()
+
+		// Получаем текущие данные задачи
+		var currentDate, repeatRule string
+		err = tx.QueryRow(`
+            SELECT date, repeat 
+            FROM scheduler 
+            WHERE id = ?`,
+			id).Scan(&currentDate, &repeatRule)
+
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+
+		now := time.Now().UTC()
+
+		// Обработка повторяющейся задачи
+		if repeatRule != "" {
+			nextDate, err := nextdate.NextDate(now, currentDate, repeatRule)
 			if err != nil {
-				c.JSON(code, gin.H{"error": err.Error()})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Ошибка вычисления даты: " + err.Error()})
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{})
-			return
+
+			_, err = tx.Exec(`
+                UPDATE scheduler 
+                SET date = ?
+                WHERE id = ?`,
+				nextDate,
+				id,
+			)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
+				return
+			}
 		} else {
-			nextDate, err := nextdate.NextDate(time.Now(), task.Date, task.Repeat)
+			// Удаление одноразовой задачи
+			_, err = tx.Exec(`
+                DELETE FROM scheduler 
+                WHERE id = ?`,
+				id,
+			)
 			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка удаления задачи"})
 				return
 			}
-			task.Date = nextDate
 		}
 
-		code, err = scheduler.UpdateTaskDB(db, *task)
-
-		if err != nil {
-			c.JSON(code, gin.H{"error": err.Error()})
+		// Фиксация транзакции
+		if err := tx.Commit(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения изменений"})
 			return
 		}
 
-		c.JSON(code, gin.H{})
+		c.JSON(http.StatusOK, gin.H{})
 	}
-
 }
 
 func DeleteTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		idStr := c.Query("id")
-		id, code, err := getTaskId(idStr)
-		if err != nil {
-			c.JSON(code, gin.H{"error": err.Error()})
+		if idStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан идентификатор задачи"})
+			return
 		}
-		code, err = scheduler.DeleteTaskDB(db, id)
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
-			c.JSON(code, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор задачи"})
+			return
 		}
+
+		result, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
+			return
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
+			return
+		}
+
 		c.JSON(http.StatusOK, gin.H{})
 	}
-}
-
-func getTaskId(idStr string) (int64, int, error) {
-	if idStr == "" {
-		return 0, http.StatusNotFound, fmt.Errorf("Не указан идентификатор задачи")
-	}
-
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		return 0, http.StatusBadRequest, fmt.Errorf("Некорректный формат ID: %w", err)
-	}
-
-	return id, 200, nil
-
 }
