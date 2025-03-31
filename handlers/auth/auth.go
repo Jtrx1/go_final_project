@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,12 +48,11 @@ func SignInHandler(pass string) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"token": tokenString})
 	}
 }
-func AuthMiddleware() gin.HandlerFunc {
+func AuthMiddleware(pass string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		envPassword := os.Getenv("TODO_PASSWORD")
-
+		
 		// Если пароль не установлен, пропускаем проверку
-		if envPassword == "" {
+		if pass == "" {
 			c.Next()
 			return
 		}
@@ -70,7 +68,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("Неожиданный метод подписи")
 			}
-			return []byte(envPassword), nil
+			return []byte(pass), nil
 		})
 
 		if err != nil || !token.Valid {
@@ -80,7 +78,7 @@ func AuthMiddleware() gin.HandlerFunc {
 
 		// Проверяем хэш пароля
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(envPassword)))
+			expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(pass)))
 			if claims["hash"] != expectedHash {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Токен устарел"})
 				return

@@ -15,6 +15,6 @@ func main() {
 		log.Println("Ошибка при открытии/инициализации БД")
 	}
 	defer db.Close()
-	r := server.SetupRouter(db)
+	r := server.SetupRouter(db, config.Password)
 	r.Run(":" + config.Port)
 }
