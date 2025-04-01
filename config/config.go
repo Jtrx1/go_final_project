@@ -12,7 +12,7 @@ func СheckEnv() *EnvVaiable {
 
 	var e EnvVaiable
 	e.DBFile = "./scheduler.db"
-	e.Password = "12345678"
+	e.Password = ""
 	e.Port = "7540"
 
 	port, ok := os.LookupEnv("TODO_PORT")
