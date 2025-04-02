@@ -12,7 +12,7 @@ func main() {
 	config := config.СheckEnv()
 	db, err := scheduler.InitDB(config.DBFile)
 	if err != nil {
-		log.Println("Ошибка при открытии/инициализации БД")
+		log.Println("Ошибка при открытии/инициализации БД: ", err)
 	}
 	defer db.Close()
 	r := server.SetupRouter(db, config.Password)

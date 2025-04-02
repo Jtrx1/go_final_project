@@ -46,12 +46,30 @@ func InitDB(dbFile string) (*sql.DB, error) {
 		return nil, fmt.Errorf("не удалось создать каталог %q: %w", dir, err)
 	}
 
+	if _, err := os.Stat(dbFile); os.IsNotExist(err) {
+		file, err := os.Create(dbFile)
+		if err != nil {
+			log.Fatal("Ошибка создания файла: ", err)
+		}
+		log.Println("Файл успешно создан")
+		err = os.Chmod(dbFile, 0777)
+		if err != nil {
+			log.Fatal("Ошибка установки прав на файл: ", err)
+		}
+		log.Println("Права на файл успешно установлены")
+
+		file.Close()
+	}
 	// Открываем соединение с БД
 	db, err := sql.Open("sqlite3", dbFile)
-	createTable(db)
 	if err != nil {
 		return nil, fmt.Errorf("не удалось подключиться к БД: %w", err)
 	}
+	err = createTable(db)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка создания таблиц в БД: %w", err)
+	}
+
 	log.Println("База данных успешно инициализирована")
 	return db, nil
 }

@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  scheduler:
+    build: .
+    ports:
+      - "7540:7540"
+    volumes:
+      - ./data:/data
+    environment:
+      - GIN_MODE=release
+      - TODO_DBFILE=/data/scheduler.db
