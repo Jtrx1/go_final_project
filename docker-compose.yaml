@@ -1,12 +1,17 @@
-version: '3.8'
+version: '3.8'  # Версия формата docker-compose
 
 services:
   scheduler:
+    # Сборка образа из Dockerfile в текущей директории
     build: .
+    
     ports:
       - "7540:7540"
+    
     volumes:
       - ./data:/data
+    
+    # Настройки окружения
     environment:
-      - GIN_MODE=release
-      - TODO_DBFILE=/data/scheduler.db
+      - GIN_MODE=release       # Режим работы Gin (оптимизирован для продакшена)
+      - TODO_DBFILE=/data/scheduler.db  # Путь к файлу БД внутри контейнера

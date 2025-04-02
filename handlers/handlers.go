@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Jtrx1/go_final_project/nextdate"
+	"github.com/Jtrx1/go_final_project/scheduler"
 	"github.com/gin-gonic/gin"
 )
 
@@ -45,7 +47,6 @@ func NextDateHandler(c *gin.Context) {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
-	// Возвращаем только строку с датой
 	c.String(http.StatusOK, nextDate)
 }
 
@@ -113,46 +114,23 @@ func AddTask(db *sql.DB) gin.HandlerFunc {
 }
 func GetTasks(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		idStr := c.Query("id")
-		if idStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Не указан идентификатор"})
-			return
-		}
+		search := strings.TrimSpace(c.Query("search"))
 
-		id, err := strconv.ParseInt(idStr, 10, 64)
+		var isDate bool
+		if search != "" {
+			if t, err := time.Parse("02.01.2006", search); err == nil {
+				search = t.Format("20060102")
+				isDate = true
+			}
+		}
+		tasks := make([]*scheduler.TaskResponse, 0)
+		var code int
+		var err error
+		tasks, code, err = scheduler.GetTasksDB(db, search, isDate, 100)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор"})
-			return
+			c.JSON(code, gin.H{"error": err})
 		}
-
-		var task TaskResponse
-
-		err = db.QueryRow(`
-            SELECT * 
-            FROM scheduler 
-            WHERE id = ?
-        `, id).Scan(
-			&task.ID,
-			&task.Date,
-			&task.Title,
-			&task.Comment,
-			&task.Repeat,
-		)
-
-		switch {
-		case err == sql.ErrNoRows:
-			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
-		case err != nil:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
-		default:
-			c.JSON(http.StatusOK, gin.H{
-				"id":      task.ID,
-				"date":    task.Date,
-				"title":   task.Title,
-				"comment": task.Comment,
-				"repeat":  task.Repeat,
-			})
-		}
+		c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 	}
 }
 
@@ -229,7 +207,6 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Обработка даты
 		now := time.Now().UTC()
 		dateStr := req.Date
 		if req.Date != "" {
@@ -351,8 +328,6 @@ func TaskDone(db *sql.DB) gin.HandlerFunc {
 				return
 			}
 		}
-
-		// Фиксация транзакции
 		if err := tx.Commit(); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения изменений"})
 			return
