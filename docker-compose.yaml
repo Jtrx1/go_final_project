@@ -16,4 +16,4 @@ services:
       - GIN_MODE=${GIN_MODE:-release}                                           # Режим работы Gin (оптимизирован для продакшена)
       - TODO_DBFILE=${CONTAINER_DATA_DIR:-/data}/${DB_FILENAME:-scheduler.db}   # Путь к файлу БД внутри контейнера. По умолчанию /data/scheduler.db
       - TODO_PORT=${INTERNAL_PORT:-7540}                                        # Внутренний порт на котором работает приложение. По умолчанию 7540
-      - TODO_PASSWORD=${TODO_PASSWORD}                                          # Переменная для пароля в веб-интерфейсе. 
+      - TODO_PASSWORD=${TODO_PASSWORD:-}                                        # Переменная для пароля в веб-интерфейсе. По умолчанию пароль не установлен

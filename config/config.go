@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"log"
 	"os"
 )
 
@@ -29,5 +31,14 @@ func СheckEnv() *EnvVaiable {
 	if ok {
 		e.Password = password
 	}
+	log.Printf("Значения переменных:\n%s",
+		fmt.Sprintf(
+			"TODO_PORT: %s\nTODO_DBFILE: %s\nTODO_PASSWORD: %s",
+			e.Port,
+			e.DBFile,
+			e.Password,
+		),
+	)
+
 	return &e
 }

@@ -45,7 +45,6 @@ func InitDB(dbFile string) (*sql.DB, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("не удалось создать каталог %q: %w", dir, err)
 	}
-	log.Println(os.Stat(dbFile))
 	if _, err := os.Stat(dbFile); os.IsNotExist(err) {
 		file, err := os.OpenFile(dbFile, os.O_CREATE|os.O_RDWR, 0666)
 		if err != nil {
@@ -53,8 +52,6 @@ func InitDB(dbFile string) (*sql.DB, error) {
 		}
 		file.Close()
 	}
-	log.Println(os.Stat(dbFile))
-	log.Println(dbFile)
 	// Открываем соединение с БД
 	db, err := sql.Open("sqlite3", dbFile)
 	if err != nil {
