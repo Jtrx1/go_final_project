@@ -45,21 +45,16 @@ func InitDB(dbFile string) (*sql.DB, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("не удалось создать каталог %q: %w", dir, err)
 	}
-
+	log.Println(os.Stat(dbFile))
 	if _, err := os.Stat(dbFile); os.IsNotExist(err) {
-		file, err := os.Create(dbFile)
+		file, err := os.OpenFile(dbFile, os.O_CREATE|os.O_RDWR, 0666)
 		if err != nil {
 			log.Fatal("Ошибка создания файла: ", err)
 		}
-		log.Println("Файл успешно создан")
-		err = os.Chmod(dbFile, 0777)
-		if err != nil {
-			log.Fatal("Ошибка установки прав на файл: ", err)
-		}
-		log.Println("Права на файл успешно установлены")
-
 		file.Close()
 	}
+	log.Println(os.Stat(dbFile))
+	log.Println(dbFile)
 	// Открываем соединение с БД
 	db, err := sql.Open("sqlite3", dbFile)
 	if err != nil {
@@ -74,9 +69,9 @@ func InitDB(dbFile string) (*sql.DB, error) {
 	return db, nil
 }
 
-func GetTaskDb(db *sql.DB, id int64) (*TaskResponse, int, error) {
+func GetTaskDb(db *sql.DB, id int64) (TaskResponse, int, error) {
 
-	task := &TaskResponse{}
+	var task TaskResponse
 
 	err := db.QueryRow(`SELECT * FROM scheduler WHERE id = ?`, id).Scan(
 		&task.ID,
@@ -88,9 +83,9 @@ func GetTaskDb(db *sql.DB, id int64) (*TaskResponse, int, error) {
 
 	switch {
 	case err == sql.ErrNoRows:
-		return nil, http.StatusBadRequest, fmt.Errorf("Задача не найдена")
+		return task, http.StatusBadRequest, fmt.Errorf("задача не найдена")
 	case err != nil:
-		return nil, http.StatusInternalServerError, fmt.Errorf("Ошибка базы данных")
+		return task, http.StatusInternalServerError, fmt.Errorf("ошибка базы данных")
 	default:
 		return task, http.StatusOK, nil
 	}
@@ -124,7 +119,7 @@ func GetTasksDB(db *sql.DB, search string, isDate bool, limit int) ([]*TaskRespo
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("Ошибка чтения данных: %w", err)
+		return nil, http.StatusInternalServerError, fmt.Errorf("ошибка чтения данных: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -137,21 +132,21 @@ func GetTasksDB(db *sql.DB, search string, isDate bool, limit int) ([]*TaskRespo
 			&task.Repeat,
 		)
 		if err != nil {
-			return nil, http.StatusInternalServerError, fmt.Errorf("Ошибка чтения данных: %w", err)
+			return nil, http.StatusInternalServerError, fmt.Errorf("ошибка чтения данных: %w", err)
 		}
 		tasks = append(tasks, task)
 	}
-	return tasks, http.StatusInternalServerError, err
+	return tasks, http.StatusOK, err
 }
 
 func DeleteTaskDB(db *sql.DB, id int64) (int, error) {
 	result, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
 	if err != nil {
-		return http.StatusInternalServerError, fmt.Errorf("Ошибка чтения данных: %w", err)
+		return http.StatusInternalServerError, fmt.Errorf("ошибка чтения данных: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return http.StatusNotFound, fmt.Errorf("Не удалено ни одной задачи")
+		return http.StatusNotFound, fmt.Errorf("не удалено ни одной задачи")
 	}
 	return http.StatusOK, nil
 }
@@ -169,8 +164,41 @@ func UpdateTaskDB(db *sql.DB, task TaskResponse) (int, error) {
 	)
 
 	if err != nil {
-		return http.StatusInternalServerError, fmt.Errorf("Ошибка обновления задачи: %w", err)
+		return http.StatusInternalServerError, fmt.Errorf("ошибка обновления задачи: %w", err)
 	}
 
 	return http.StatusOK, nil
+}
+
+func InsertTaskDB(db *sql.DB, task TaskResponse) (int64, error) {
+	result, err := db.Exec(
+		"INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
+		task.Date,
+		task.Title,
+		task.Comment,
+		task.Repeat,
+	)
+	if err != nil {
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+
+		return 0, err
+	}
+	return id, nil
+
+}
+
+func TaskExists(db *sql.DB, id int64) (bool, error) {
+	var exists bool
+	err := db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM scheduler WHERE id = ?)",
+		id,
+	).Scan(&exists)
+
+	if err != nil {
+		return false, fmt.Errorf("ошибка проверки поиска задачи: %w", err)
+	}
+	return exists, nil
 }

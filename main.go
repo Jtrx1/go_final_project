@@ -16,5 +16,8 @@ func main() {
 	}
 	defer db.Close()
 	r := server.SetupRouter(db, config.Password)
-	r.Run(":" + config.Port)
+	err = r.Run(":" + config.Port)
+	if err != nil {
+		log.Println("Ошибка запуска сервера:", err)
+	}
 }

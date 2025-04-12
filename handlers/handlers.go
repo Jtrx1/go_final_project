@@ -12,16 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Структура для добавления задачи
-type TaskRequest struct {
-	Date    string `json:"date"`
-	Title   string `json:"title" binding:"required"`
-	Comment string `json:"comment"`
-	Repeat  string `json:"repeat"`
-}
-
 // Структура для поиска задачи
-type TaskResponse struct {
+type Task struct {
 	ID      string `json:"id"`
 	Date    string `json:"date"`
 	Title   string `json:"title"`
@@ -52,7 +44,7 @@ func NextDateHandler(c *gin.Context) {
 
 func AddTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req TaskRequest
+		var req scheduler.TaskResponse
 		now := time.Now().UTC()
 
 		// Парсинг JSON
@@ -93,18 +85,8 @@ func AddTask(db *sql.DB) gin.HandlerFunc {
 			}
 
 		}
-		result, err := db.Exec(
-			"INSERT INTO scheduler (date, title, comment, repeat) VALUES (?, ?, ?, ?)",
-			dateStr,
-			req.Title,
-			req.Comment,
-			req.Repeat,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения задачи"})
-			return
-		}
-		id, err := result.LastInsertId()
+		req.Date = dateStr
+		id, err := scheduler.InsertTaskDB(db, req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения ID задачи"})
 			return
@@ -119,7 +101,7 @@ func GetTasks(db *sql.DB) gin.HandlerFunc {
 		var isDate bool
 		if search != "" {
 			if t, err := time.Parse("02.01.2006", search); err == nil {
-				search = t.Format("20060102")
+				search = t.Format(nextdate.TimeFormat)
 				isDate = true
 			}
 		}
@@ -130,6 +112,7 @@ func GetTasks(db *sql.DB) gin.HandlerFunc {
 		if err != nil {
 			c.JSON(code, gin.H{"error": err})
 		}
+
 		c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 	}
 }
@@ -148,39 +131,21 @@ func GetTask(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		var task TaskResponse
-
-		err = db.QueryRow(`
-            SELECT * 
-            FROM scheduler 
-            WHERE id = ?
-        `, id).Scan(
-			&task.ID,
-			&task.Date,
-			&task.Title,
-			&task.Comment,
-			&task.Repeat,
-		)
+		var task scheduler.TaskResponse
+		var code int
+		task, code, err = scheduler.GetTaskDb(db, id)
 
 		switch {
-		case err == sql.ErrNoRows:
-			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
 		case err != nil:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
+			c.JSON(code, gin.H{"error": err})
 		default:
-			c.JSON(http.StatusOK, gin.H{
-				"id":      task.ID,
-				"date":    task.Date,
-				"title":   task.Title,
-				"comment": task.Comment,
-				"repeat":  task.Repeat,
-			})
+			c.JSON(http.StatusOK, task)
 		}
 	}
 }
 func EditTask(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req TaskResponse
+		var req scheduler.TaskResponse
 
 		// Парсинг и валидация входных данных
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -192,17 +157,14 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Для задачи обязателен щаголовок"})
 			return
 		}
-		// Преобразование ID в число
-		id, err := strconv.ParseInt(req.ID, 10, 64)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный идентификатор"})
-			return
-		}
 
 		// Проверка существования задачи
-		var exists bool
-		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM scheduler WHERE id = ?)", id).Scan(&exists)
-		if err != nil || !exists {
+		exists, err := scheduler.TaskExists(db, req.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err})
+			return
+		}
+		if !exists {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
 			return
 		}
@@ -234,17 +196,8 @@ func EditTask(db *sql.DB) gin.HandlerFunc {
 			dateStr = nextDate
 		}
 
-		// Обновление в БД
-		_, err = db.Exec(`
-				UPDATE scheduler 
-				SET date = ?, title = ?, comment = ?, repeat = ?
-				WHERE id = ?`,
-			dateStr,
-			req.Title,
-			req.Comment,
-			req.Repeat,
-			id,
-		)
+		req.Date = dateStr
+		_, err = scheduler.UpdateTaskDB(db, req)
 
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
@@ -270,21 +223,7 @@ func TaskDone(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Начинаем транзакцию
-		tx, err := db.Begin()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка начала транзакции"})
-			return
-		}
-		defer tx.Rollback()
-
-		// Получаем текущие данные задачи
-		var currentDate, repeatRule string
-		err = tx.QueryRow(`
-            SELECT date, repeat 
-            FROM scheduler 
-            WHERE id = ?`,
-			id).Scan(&currentDate, &repeatRule)
+		task, _, err := scheduler.GetTaskDb(db, id)
 
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -294,45 +233,32 @@ func TaskDone(db *sql.DB) gin.HandlerFunc {
 			}
 			return
 		}
-
 		now := time.Now().UTC()
 
 		// Обработка повторяющейся задачи
-		if repeatRule != "" {
-			nextDate, err := nextdate.NextDate(now, currentDate, repeatRule)
+		if task.Repeat != "" {
+			nextDate, err := nextdate.NextDate(now, task.Date, task.Repeat)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Ошибка вычисления даты: " + err.Error()})
 				return
 			}
 
-			_, err = tx.Exec(`
-                UPDATE scheduler 
-                SET date = ?
-                WHERE id = ?`,
-				nextDate,
-				id,
-			)
+			task.Date = nextDate
+			_, err = scheduler.UpdateTaskDB(db, task)
+
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления задачи"})
 				return
 			}
 		} else {
 			// Удаление одноразовой задачи
-			_, err = tx.Exec(`
-                DELETE FROM scheduler 
-                WHERE id = ?`,
-				id,
-			)
+			_, err = scheduler.DeleteTaskDB(db, task.ID)
+
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка удаления задачи"})
 				return
 			}
 		}
-		if err := tx.Commit(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сохранения изменений"})
-			return
-		}
-
 		c.JSON(http.StatusOK, gin.H{})
 	}
 }
@@ -351,15 +277,9 @@ func DeleteTask(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		result, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
+		_, err = scheduler.DeleteTaskDB(db, id)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка базы данных"})
-			return
-		}
-
-		rowsAffected, _ := result.RowsAffected()
-		if rowsAffected == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
 			return
 		}
 

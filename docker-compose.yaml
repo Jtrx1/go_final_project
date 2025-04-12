@@ -6,12 +6,14 @@ services:
     build: .
     
     ports:
-      - "7540:7540"
+      - "${EXTERNAL_PORT:-7540}:${INTERNAL_PORT:-7540}"                         # Переопредедение портов на хосте и в контейнере
     
     volumes:
-      - ./data:/data
+      - "${HOST_DATA_DIR:-.}:${CONTAINER_DATA_DIR:-/data}"                      # Путь на хосте. По умолчанию файл с БД сохраняется в текущей директории
     
     # Настройки окружения
     environment:
-      - GIN_MODE=release       # Режим работы Gin (оптимизирован для продакшена)
-      - TODO_DBFILE=/data/scheduler.db  # Путь к файлу БД внутри контейнера
+      - GIN_MODE=${GIN_MODE:-release}                                           # Режим работы Gin (оптимизирован для продакшена)
+      - TODO_DBFILE=${CONTAINER_DATA_DIR:-/data}/${DB_FILENAME:-scheduler.db}   # Путь к файлу БД внутри контейнера. По умолчанию /data/scheduler.db
+      - TODO_PORT=${INTERNAL_PORT:-7540}                                        # Внутренний порт на котором работает приложение. По умолчанию 7540
+      - TODO_PASSWORD=${TODO_PASSWORD}                                          # Переменная для пароля в веб-интерфейсе. 

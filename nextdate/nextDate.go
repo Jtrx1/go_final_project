@@ -9,19 +9,13 @@ import (
 
 const TimeFormat = "20060102"
 
-// Представляем ответ API с возможными ошибками
-type Response struct {
-	ID    int64  `json:"id,omitempty,string"`
-	Error string `json:"error,omitempty"`
-}
-
 func NextDate(now time.Time, date string, repeat string) (string, error) {
 	if repeat == "" {
-		return "", fmt.Errorf("Повторение не требуется")
+		return "", fmt.Errorf("повторение не требуется")
 	}
 
 	// Разбираем начальную дату задачи
-	parseDate, err := time.Parse("20060102", date)
+	parseDate, err := time.Parse(TimeFormat, date)
 	if err != nil {
 		return "", err
 	}
